@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>School Attendance Scanner</title>
+
+  <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 18px;
+      background: #f4f6f8;
+      color: #17202a;
+    }
+
+    .wrap {
+      max-width: 720px;
+      margin: auto;
+    }
+
+    .card {
+      background: white;
+      border-radius: 18px;
+      padding: 18px;
+      margin-bottom: 14px;
+      box-shadow: 0 2px 12px rgba(0,0,0,.08);
+    }
+
+    h1 {
+      margin: 0 0 5px;
+      font-size: 24px;
+    }
+
+    label {
+      display: block;
+      font-weight: 700;
+      margin: 12px 0 6px;
+    }
+
+    select,
+    button {
+      width: 100%;
+      padding: 13px;
+      border-radius: 10px;
+      border: 1px solid #ccd2d8;
+      font-size: 16px;
+      box-sizing: border-box;
+    }
+
+    button {
+      margin-top: 10px;
+      cursor: pointer;
+      background: #17202a;
+      color: white;
+      border: none;
+    }
+
+    button.stop {
+      background: #c0392b;
+    }
+
+    #reader {
+      width: 100%;
+      margin-top: 12px;
+    }
+
+    .result {
+      text-align: center;
+      padding: 16px;
+      border-radius: 14px;
+      margin-top: 14px;
+      font-weight: 700;
+    }
+
+    .ok {
+      background: #dff5e3;
+      color: #176b2c;
+    }
+
+    .bad {
+      background: #fdecec;
+      color: #a12622;
+    }
+
+    .muted {
+      color: #667;
+      font-size: 14px;
+    }
+
+    .student {
+      font-size: 20px;
+      margin: 8px 0;
+    }
+  </style>
+</head>
+
+<body>
+
+<div class="wrap">
+
+  <div class="card">
+    <h1>School Event Attendance</h1>
+    <div class="muted">
+      QR Check-in / Check-out
+    </div>
+
+    <label for="event">Event</label>
+    <select id="event">
+      <option value="">Loading events...</option>
+    </select>
+
+    <button onclick="startScanner()">
+      Start Camera Scanner
+    </button>
+
+    <button class="stop" onclick="stopScanner()">
+      Stop Scanner
+    </button>
+
+    <div id="reader"></div>
+
+    <div id="result"></div>
+  </div>
+
+</div>
+
+<script>
+
+const API =
+  "https://script.google.com/macros/s/AKfycbw5s3gC2B9S_w24-X1b3y3gDwjpd-0Mw3XglZqiravzCgFVmTIU8S6vMBj0T7ccsyjoog/exec";
+
+let scanner = null;
+let scanning = false;
+let busy = false;
+
+
+/* -------------------------
+   JSONP CONNECTION
+------------------------- */
+
+function api(action, params, callback) {
+
+  const callbackName =
+    "apiCallback_" + Date.now() + "_" +
+    Math.floor(Math.random() * 100000);
+
+  const script = document.createElement("script");
+
+  const query = new URLSearchParams();
+
+  query.append("action", action);
+  query.append("callback", callbackName);
+
+  if (params) {
+    Object.keys(params).forEach(key => {
+      query.append(key, params[key]);
+    });
+  }
+
+  window[callbackName] = function(data) {
+
+    delete window[callbackName];
+
+    if (script.parentNode) {
+      script.parentNode.removeChild(script);
+    }
+
+    callback(null, data);
+  };
+
+  script.onerror = function() {
+
+    delete window[callbackName];
+
+    if (script.parentNode) {
+      script.parentNode.removeChild(script);
+    }
+
+    callback(new Error("Could not connect to attendance server."));
+  };
+
+  script.src = API + "?" + query.toString();
+
+  document.body.appendChild(script);
+}
+
+
+/* -------------------------
+   LOAD EVENTS
+------------------------- */
+
+function loadEvents() {
+
+  api("getEvents", {}, function(err, events) {
+
+    const select = document.getElementById("event");
+
+    if (err) {
+      select.innerHTML =
+        '<option value="">Could not load events</option>';
+
+      show("Could not connect to attendance system.", false);
+      return;
+    }
+
+    select.innerHTML =
+      '<option value="">Select an event</option>';
+
+    if (!events || events.length === 0) {
+
+      select.innerHTML =
+        '<option value="">No active events</option>';
+
+      return;
+    }
+
+    events
+      .filter(e => e.active)
+      .forEach(e => {
+
+        const option =
+          document.createElement("option");
+
+        option.value = e.id;
+
+        option.textContent =
+          e.name + " — " + e.date;
+
+        select.appendChild(option);
+      });
+  });
+}
+
+
+/* -------------------------
+   START CAMERA
+------------------------- */
+
+function startScanner() {
+
+  if (scanning) return;
+
+  const eventId =
+    document.getElementById("event").value;
+
+  if (!eventId) {
+
+    show("Please select an event first.", false);
+    return;
+  }
+
+  document.getElementById("result").innerHTML = "";
+
+  scanner = new Html5Qrcode("reader");
+
+  scanner.start(
+    {
+      facingMode: {
+        ideal: "environment"
+      }
+    },
+    {
+      fps: 10,
+      qrbox: {
+        width: 250,
+        height: 250
+      }
+    },
+    function(decodedText) {
+      handleScan(decodedText);
+    },
+    function(errorMessage) {
+      // Ignore normal scanning errors
+    }
+  )
+  .then(function() {
+
+    scanning = true;
+
+    show(
+      "Camera started. Point it at the student's QR code.",
+      true
+    );
+
+  })
+  .catch(function(error) {
+
+    console.error(error);
+
+    show(
+      "Camera could not start: " +
+      (error.message || error),
+      false
+    );
+  });
+}
+
+
+/* -------------------------
+   STOP CAMERA
+------------------------- */
+
+function stopScanner() {
+
+  if (!scanner || !scanning) return;
+
+  scanner.stop()
+    .then(function() {
+
+      scanning = false;
+
+      document.getElementById("reader").innerHTML = "";
+
+    })
+    .catch(function(error) {
+
+      console.error(error);
+
+      scanning = false;
+
+      document.getElementById("reader").innerHTML = "";
+    });
+}
+
+
+/* -------------------------
+   PROCESS QR
+------------------------- */
+
+function handleScan(text) {
+
+  if (busy) return;
+
+  const match =
+    String(text)
+      .trim()
+      .match(/^ATTEND:(SCH-\d+)$/i);
+
+  if (!match) {
+
+    show(
+      "Not a valid school attendance QR code.",
+      false
+    );
+
+    return;
+  }
+
+  const attendeeId =
+    match[1].toUpperCase();
+
+  const eventId =
+    document.getElementById("event").value;
+
+  if (!eventId) {
+
+    show(
+      "Please select an event first.",
+      false
+    );
+
+    return;
+  }
+
+  busy = true;
+
+  show("Processing...", true);
+
+  api(
+    "recordAttendance",
+    {
+      attendeeId: attendeeId,
+      eventId: eventId,
+      scannerUser: "Scanner"
+    },
+    function(err, response) {
+
+      busy = false;
+
+      if (err) {
+
+        show(
+          "System error: " + err.message,
+          false
+        );
+
+        return;
+      }
+
+      if (response && response.ok) {
+
+        let message =
+          "<div class='student'>" +
+          escapeHtml(response.name || "") +
+          "</div>";
+
+        message +=
+          "<div>" +
+          escapeHtml(response.message || "") +
+          "</div>";
+
+        if (response.time) {
+
+          message +=
+            "<div class='muted'>" +
+            escapeHtml(response.time) +
+            "</div>";
+        }
+
+        showHtml(message, true);
+
+      } else {
+
+        show(
+          response && response.message
+            ? response.message
+            : "Attendance could not be recorded.",
+          false
+        );
+      }
+
+      // Prevent the same QR from being processed repeatedly
+      setTimeout(function() {
+        busy = false;
+      }, 2000);
+    }
+  );
+}
+
+
+/* -------------------------
+   DISPLAY RESULT
+------------------------- */
+
+function show(message, good) {
+
+  const box =
+    document.getElementById("result");
+
+  box.className =
+    "result " + (good ? "ok" : "bad");
+
+  box.textContent = message;
+}
+
+
+function showHtml(message, good) {
+
+  const box =
+    document.getElementById("result");
+
+  box.className =
+    "result " + (good ? "ok" : "bad");
+
+  box.innerHTML = message;
+}
+
+
+/* -------------------------
+   SECURITY
+------------------------- */
+
+function escapeHtml(value) {
+
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+
+/* -------------------------
+   STARTUP
+------------------------- */
+
+loadEvents();
+
+</script>
+
+</body>
+</html>
