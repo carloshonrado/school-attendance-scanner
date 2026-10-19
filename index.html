@@ -371,13 +371,16 @@ function handleScan(text) {
 
   show("Processing...", true);
 
+  
   api(
     "recordAttendance",
     {
       attendeeId: attendeeId,
       eventId: eventId,
-      scannerUser: "Scanner"
+      scannerUser: "Scanner",
+      attendanceAction: document.getElementById("attendanceAction").value
     },
+
     function(err, response) {
 
       busy = false;
